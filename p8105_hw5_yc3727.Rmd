@@ -6,6 +6,7 @@ output: github_document
 
 ```{r setup, include = FALSE}
 library(tidyverse)
+library(ggplot2)
 
 knitr::opts_chunk$set(
   fig.width = 6,
@@ -27,7 +28,7 @@ scale_fill_discrete = scale_fill_viridis_d
 
 ## Problem 1
 
-### Read in the data.Describe the raw data. Create a city_state variable. 
+### Read in the data. Describe the raw data. Create a city_state variable. 
 
 ```{r}
 
@@ -49,6 +50,7 @@ homicide_df = data %>%
 
 ```
 
+The raw data is essentially showing data on homicides in 50 large U.S. cities. The raw data contains 52178 observations. The key variables include uid,reported_date,victim_last,victim_first,victim_race,victim_age,victim_sex,city,state,latitude,longitude,disposition (e.g. "Closed without arrest", "Open/No arrest", and "Closed by arrest"). 
 
 ### Summarize within cities to obtain the total number of homicides and the number of unsolved homicides.
 
@@ -102,51 +104,157 @@ results_df %>%
 
 
 ## Problem 2
-### Create a tidy dataframe containing data from all participants, including the subject ID, arm, and observations over time:
-
+### Create a tidy dataframe containing data from all participants, including the subject ID, arm, and observations over time.
 
 ```{r}
 
-data_path = "problem2_data"
-files = dir(data_path, pattern = "*.csv") 
-
-data = files %>%
-  map(~ read_csv(file.path(data_path, .))) %>% 
-  reduce(rbind)
+path_df = tibble(
+  path = list.files("problem2_data"), 
+) %>%
+  mutate(
+    path = str_c("problem2_data/", path), 
+    data = map(.x = path, ~read.csv(.x), col_type = "dddddddd"), 
+  ) %>%
+  separate(path, into = c("cut", "path"), sep = "/") %>%
+  separate(path, into = c("arm", "subject_id"), sep = "_") %>%
+  select(-cut) %>%
+  unnest(data) %>%
+  pivot_longer(
+    week_1:week_8, 
+    names_to = "week_number", 
+    values_to = "value"
+  ) %>%
+  mutate(week_number = str_replace(week_number, "week_", "")) %>%
+  mutate(subject_id = str_replace(subject_id, ".csv", "")) %>%
+  mutate(arm = str_replace(arm, "con", "control")) %>%
+  mutate(arm = str_replace(arm, "exp", "experimental"))
 
 ```
+
+### Make a spaghetti plot showing observations on each subject over time, and comment on differences between groups.
+
+```{r}
+
+path_df %>%
+  ggplot(aes(x = week_number, y = value, group = subject_id, color = subject_id)) + 
+  geom_line() + geom_point() +
+  facet_grid(.~ arm) + 
+  labs(title = "Observations on each subject over time", 
+       x = "Week number", 
+       y = "Value")
+  
+```
+
+It appears that the average value seems to be higher in general in the experimental group than the control group. On the other hand, the observed values for the control group tend to be between the range of -2.5 and 5. While there is no clear increasing or decreasing trend in the control group and the values seem to fluctuate quite a bit over time for both groups, the values seem to be showing a general increasing trend over time in the experimental group compared to the control group.  
 
 ## Problem 3 
 
-### Simulation 
+### Set up function 
+
+```{r}
+sim_ttest = function(mu) {
+ 
+  sim_data = tibble(
+    x = rnorm(n = 30, mean = mu, sd = 5),
+  )
+ 
+  sim_data %>%
+    t.test(mu = 0, alternative = "two.sided", conf.level = 0.95) %>%
+    broom::tidy() %>%
+    select(estimate,p.value)
+}
+
+sim_ttest(0)
+
+```
+
+### Generate 5000 datasets from the model. 
 
 ```{r}
 
-sim_mean_sd = function(n = 30, mu = 0, sigma = 5){
-  
-  sim_data = tibble(
-    x = rnorm(n, mean = mu, sd = sigma),
-  )
-  
-  sim_data %>% 
-    summarize(
-      mu_hat = mean(x),
-      sigma_hat = sd(x), 
-      p_value = t.test(x)$p.value
-    )
-}
-  
-output = vector("list", 5000)
+sim_results = 
+  rerun(5000, sim_ttest(0)) %>%
+  bind_rows
 
-for (i in 1:5000) {
-  output[[i]] = sim_mean_sd(30)
-}
+```
 
-sim_results = bind_rows(output)
+### Repeat for μ={1,2,3,4,5,6}. 
 
-head(sim_results)
+```{r}
+
+sim_results = 
+  tibble(mu = c(1,2,3,4,5,6)) %>% 
+  mutate(
+    output_lists = map(.x = mu, ~rerun(5000, sim_ttest(.x))), 
+    estimate_dfs = map(output_lists, bind_rows)
+  ) %>%
+  select(-output_lists) %>%
+  unnest(estimate_dfs)
 
 ```
 
 
+### Make a plot showing the proportion of times the null was rejected (the power of the test) on the y axis and the true value of μ on the x axis. Describe the association between effect size and power.
 
+
+```{r}
+sim_results %>%
+  mutate(reject = ifelse(p.value < 0.05, 1, 0)) %>%
+  group_by(mu) %>%
+  summarize(prop_reject = mean(reject)) %>%
+  ggplot(aes(x = mu, y = prop_reject)) +
+  geom_point() + geom_smooth()+
+  labs(
+  title = "Proportion of times the null is rejected",
+  x = "True value of Mu",
+  y = "Power")
+
+```
+It appears that there is a positive correlation between effect size and power. That is, as the effect size increases, the power also increases. Power seems to plateau and reaches its highest point around the effect size = 4 (given that the null hypothesis is mu = 0 and alpha = 0.05). This result makes sense because for a given population standard deviation, the greater the difference between the means of the null and alternative distributions, the greater the power. 
+
+### Make a plot showing the average estimate of μ^ on the y axis and the true value of μ on the x axis. Make a second plot (or overlay on the first) the average estimate of μ^ only in samples for which the null was rejected on the y axis and the true value of μ on the x axis. Is the sample average of μ^ across tests for which the null is rejected approximately equal to the true value of μ? Why or why not?
+
+```{r}
+
+data_total = 
+  sim_results %>%
+  mutate(result = case_when(
+    p.value < 0.05 ~ "rejected", 
+    p.value >= 0.05 ~ "fail to reject"
+  )) %>% 
+  group_by(mu) %>%
+  summarize(
+    total = mean(estimate)
+  )
+
+only_rejected = 
+  sim_results %>%
+  mutate(result = case_when(
+    p.value < 0.05 ~ "rejected", 
+    p.value >= 0.05 ~ "fail to reject"
+  )) %>% 
+  filter(result == "rejected") %>%
+  group_by(mu) %>%
+  summarize(
+    rejected = mean(estimate)
+  )
+
+combined_graph = 
+  left_join(data_total, only_rejected, by = "mu") %>%
+  pivot_longer(
+    total:rejected, 
+    names_to = "data_types", 
+    values_to = "avg_estimated_mu"
+  )
+
+combined_graph %>%
+  ggplot(aes(x = mu, y = avg_estimated_mu, color = data_types)) + 
+  geom_point() + 
+  geom_smooth() +
+  labs(title = "Total data vs. Only rejected data",
+  x = "True value of mu",
+  y = "Average estimate of mu")
+
+```
+
+The sample average of estimated μ across tests for which the null is rejected is NOT approximately equal to the true value of mu for lower values of true mu because there is some divergence between the two lines at those points. However, as we approach larger true mu values, the two lines converge, indicating that the sample average of estimated mu across tests for which the null is rejected becomes approximately equal to the true value of mu as the true values of mu become larger. 
