@@ -155,7 +155,7 @@ It appears that the average value seems to be higher in general in the experimen
 ### Set up function 
 
 ```{r}
-sim_ttest = function(mu) {
+sim_function = function(mu) {
  
   sim_data = tibble(
     x = rnorm(n = 30, mean = mu, sd = 5),
@@ -167,7 +167,7 @@ sim_ttest = function(mu) {
     select(estimate,p.value)
 }
 
-sim_ttest(0)
+sim_function(0)
 
 ```
 
@@ -176,7 +176,7 @@ sim_ttest(0)
 ```{r}
 
 sim_results = 
-  rerun(5000, sim_ttest(0)) %>%
+  rerun(5000, sim_function(0)) %>%
   bind_rows
 
 ```
@@ -188,7 +188,7 @@ sim_results =
 sim_results = 
   tibble(mu = c(1,2,3,4,5,6)) %>% 
   mutate(
-    output_lists = map(.x = mu, ~rerun(5000, sim_ttest(.x))), 
+    output_lists = map(.x = mu, ~rerun(5000, sim_function(.x))), 
     estimate_dfs = map(output_lists, bind_rows)
   ) %>%
   select(-output_lists) %>%
@@ -209,7 +209,7 @@ sim_results %>%
   geom_point() + geom_smooth()+
   labs(
   title = "Proportion of times the null is rejected",
-  x = "True value of Mu",
+  x = "True value of mu",
   y = "Power")
 
 ```
